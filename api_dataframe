@@ -1,0 +1,146 @@
+import requests
+import json
+import os
+import pandas as pd
+import snowflake.connector.pandas_tools as pd_tools
+import snowflake.connector
+
+# API endpoint URL
+url = "https://environment.data.gov.uk/flood-monitoring/id/stations"
+
+# Send GET request to API
+response = requests.get(url)
+
+if response.status_code == 200:
+    
+    # Parse the JSON data
+    data = response.json()
+    data_list = []
+
+    def first_if_list(value):
+        # Check if the value is a list
+        if isinstance(value, list) and value:
+            # Return the first item in the list if the list is not empty
+            return value[0]
+        else:
+            # Return the value itself if it is not a list or if the list is empty
+            return value
+
+    # Iterate through the JSON data and insert it into the df
+    for item in data['items']:
+        station_id = str(item.get('stationReference', '')).replace("'", "")
+        station_url_id = str(item.get('@id', '')).replace("'", "")
+        catchment_name = str(item.get('catchmentName','')).replace("'", "")
+        river_name = str(item.get('riverName', '')).replace("'", "")
+        town = str(item.get('town', '')).replace("'", "")
+        date_opened = first_if_list(item.get('dateOpened', ''))
+        label = str(first_if_list(item.get('label', ''))).replace("'", "")
+        lat = first_if_list(item.get('lat',0))
+        long = first_if_list(item.get('long',0))
+    
+        # create dictionary with the above values
+        data_dict = {
+            'station_id': station_id,
+            'station_url_id': station_url_id,
+            'catchment_name': catchment_name,
+            'river_name': river_name,
+            'town': town,
+            'date_opened': date_opened,
+            'label': label,
+            'lat': lat,
+            'long': long
+        }
+
+        # Append the dictionary to the list
+        data_list.append(data_dict)
+
+    # Create a pandas data frame from the list of dictionaries
+    df = pd.DataFrame(data_list)
+
+    # return only specific station references
+    selected_stations = df.loc[df['river_name'] == 'River Irwell', 'station_id']
+
+    print("Selected stations:", selected_stations)
+
+    # Retrieve credentials from environment variables
+    user = os.environ.get('sf_username')
+    password = os.environ.get('sf_password')
+
+    # Connect to Snowflake
+    print("Connecting to Snowflake...")
+    conn = snowflake.connector.connect(
+        user=user,
+        password=password,
+        account='interworks.eu-central-1',
+        warehouse='WH_CONSULTANT_GENERIC',
+        database='ST_RAW',
+        schema='RIVERS'
+    )
+    
+    print("Connected to Snowflake.")
+
+    # Create a cursor object
+    cursor = conn.cursor()
+        
+    # Create the table if it doesn't already exist
+    create_table_query = """
+        CREATE TABLE IF NOT EXISTS st_raw.rivers.measures (
+                MEASURE_ID VARCHAR(255),
+                DATETIME TIMESTAMP_NTZ,
+                VALUE FLOAT
+                )
+    """
+    print("Executing table creation query...")
+    cursor.execute(create_table_query)
+    print("Table creation query executed.")
+
+    # Commit the transaction
+    conn.commit()
+    print("Transaction committed.")
+
+    # URL template
+    base_url = 'https://environment.data.gov.uk/flood-monitoring/data/readings?startdate=2024-05-01&enddate=2024-05-02&stationReference='
+
+    # Loop through stations and insert into URL
+    for station in selected_stations:
+        url = base_url + station
+
+        response = requests.get(url)
+        
+        # Parse the JSON data
+        data = response.json()
+        data_list = []
+        
+        # Iterate through the JSON data and insert it into the df
+        for item in data['items']:
+            measure_id = item.get('@id', '')
+            dateTime = item.get('dateTime')
+            value = item.get('value')
+                    
+            # create dictionary with the above values
+            data_dict = {
+                'MEASURE_ID': measure_id,
+                'DATETIME': dateTime,
+                'VALUE' : value
+            }
+
+            # Append the dictionary to the list
+            data_list.append(data_dict)
+        
+        # Create a pandas data frame from the list of dictionaries
+        df = pd.DataFrame(data_list)
+
+        # Snowflake table name
+        table_name = 'MEASURES'
+
+        # Appending DataFrame to Snowflake table
+        print("Writing data to Snowflake...")
+        pd_tools.write_pandas(conn, df, table_name, conn.database, conn.schema)
+        print("Data written to Snowflake.")
+
+else:
+    print(f"Failed to fetch data. HTTP Status code: {response.status_code}")
+
+
+
+    
