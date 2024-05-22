@@ -8,6 +8,11 @@ import snowflake.connector
 # API endpoint URL
 url = "https://environment.data.gov.uk/flood-monitoring/id/stations"
 
+# Set values for URL later on
+chosen_river = 'River Irwell'
+startdate = '2024-05-03'
+enddate = '2024-05-03'
+
 # Send GET request to API
 response = requests.get(url)
 
@@ -58,7 +63,7 @@ if response.status_code == 200:
     df = pd.DataFrame(data_list)
 
     # return only specific station references
-    selected_stations = df.loc[df['river_name'] == 'River Irwell', 'station_id']
+    selected_stations = df.loc[df['river_name'] == chosen_river, 'station_id']
 
     print("Selected stations:", selected_stations)
 
@@ -99,11 +104,13 @@ if response.status_code == 200:
     print("Transaction committed.")
 
     # URL template
-    base_url = 'https://environment.data.gov.uk/flood-monitoring/data/readings?startdate=2024-05-01&enddate=2024-05-02&stationReference='
+    base_url = 'https://environment.data.gov.uk/flood-monitoring/data/readings?'
 
     # Loop through stations and insert into URL
     for station in selected_stations:
-        url = base_url + station
+        url = base_url + 'startdate=' + startdate + '&enddate=' + enddate + '&stationReference=' + station
+
+        print(url)
 
         response = requests.get(url)
         
